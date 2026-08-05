@@ -1,0 +1,67 @@
+name: Reusable Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      image-repository:
+        required: true
+        type: string
+      image-tag:
+        required: true
+        type: string
+      deployment-track:
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install kubectl and kubelogin
+        run: az aks install-cli --client-version v1.36.2 --kubelogin-version v0.2.19
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group rg-main-akscanary-${{ inputs.environment }} \
+            --name aks-akscanary-${{ inputs.environment }} \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Helm upgrade
+        run: |
+          helm upgrade --install voting-app-${{ inputs.deployment-track }} helm/voting-app \
+            --values helm/voting-app/values.yml \
+            --values helm/voting-app/values-${{ inputs.environment }}.yml \
+            --set track=${{ inputs.deployment-track }} \
+            --set-string image.repository=${{ inputs.image-repository }} \
+            --set-string image.tag=${{ inputs.image-tag }} \
+            --namespace voting \
+            --create-namespace \
+            --wait \
+            --timeout 5m
