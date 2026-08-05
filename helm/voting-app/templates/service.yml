@@ -1,0 +1,14 @@
+{{- if eq .Values.track "stable" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: voting-app
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: voting-app
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+{{- end }}

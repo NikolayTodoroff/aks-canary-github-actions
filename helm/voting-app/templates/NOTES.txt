@@ -1,0 +1,20 @@
+Voting app deployed successfully.
+
+Release:    {{ .Release.Name }}
+Namespace:  {{ .Values.namespace }}
+Track:      {{ .Values.track }}
+Replicas:   {{ .Values.replicaCount }}
+
+To check rollout status:
+  kubectl get pods -n {{ .Values.namespace }} -l app=voting-app,track={{ .Values.track }}
+
+To get the external IP:
+  kubectl get ingress voting-ingress -n {{ .Values.namespace }}
+
+To promote canary to stable:
+  Run promote.yml workflow with the canary's image tag (github.sha)
+
+To roll back a failed canary:
+  Scale canary to 0:
+  kubectl scale deployment voting-app-canary -n {{ .Values.namespace }} --replicas=0
+  All traffic returns to stable immediately.

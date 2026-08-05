@@ -1,0 +1,4 @@
+replicaCount: 1
+
+rbac:
+  adminGroupObjectId: "6bafad54-4b72-4bdf-a0f0-ef624315c576"

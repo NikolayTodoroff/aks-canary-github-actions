@@ -1,0 +1,49 @@
+namespace: voting
+
+image:
+  repository: ""
+  tag: ""
+
+replicaCount: 1
+
+version: "1.0"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi 
+
+redis:
+  image:
+    repository: redis
+    tag: "7.2"
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 1Gi
+    storageClassName: managed-csi
+  host: redis
+  password: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  path: / 
+
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 6
+  cpuUtilization: 70
+
+rbac:
+  adminGroupObjectId: ""  
