@@ -1,0 +1,32 @@
+name: Terraform Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options:
+          - dev
+          - prod
+        default: dev
+      terraform_action:
+        description: 'Action to perform'
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+jobs:
+  terraform:
+    uses: ./.github/workflows/reusable-infra.yml
+    with:
+      environment: ${{ inputs.environment }}
+      terraform_action: ${{ inputs.terraform_action }}
+    secrets: inherit
