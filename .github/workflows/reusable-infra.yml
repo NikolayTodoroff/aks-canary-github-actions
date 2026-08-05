@@ -1,0 +1,104 @@
+name: Reusable Terraform
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        type: string
+      terraform_action:
+        description: "Terraform action to perform (plan, apply)"
+        required: true
+        type: string
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.terraform_action }} — ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: true
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_pipeline_sp_object_id: ${{ secrets.WORKFLOW_SP_OBJECT_ID }}
+      TF_VAR_aks_admin_group_object_id: ${{ secrets.AKS_ADMIN_GROUP_OBJECT_ID }}
+
+    defaults:
+      run:
+        working-directory: infra/main
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-tfstate-${{ inputs.environment }}" \
+            -backend-config="storage_account_name=stakscanary${{ inputs.environment }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=akscanary-${{ inputs.environment }}.tfstate"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: TFLint Setup
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: TFLint Run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tflint --init --config=${{ github.workspace }}/infra/.tflint.hcl
+          tflint --config=${{ github.workspace }}/infra/.tflint.hcl
+
+      - name: Checkov Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/
+          output_format: sarif
+          output_file_path: checkov.sarif
+          config_file: .checkov.yml
+          soft_fail: true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+
+      - name: Terraform Plan
+        if: inputs.terraform_action == 'plan' || inputs.terraform_action == 'apply'
+        run: |
+          terraform plan \
+            -var-file="../env/${{ inputs.environment }}.tfvars" \
+            -out=tfplan
+
+      - name: Upload Plan
+        if: inputs.terraform_action == 'plan' || inputs.terraform_action == 'apply'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: infra/main/tfplan
+          retention-days: 1
+
+      - name: Terraform Apply
+        if: inputs.terraform_action == 'apply'
+        run: |
+          terraform apply -auto-approve tfplan    
