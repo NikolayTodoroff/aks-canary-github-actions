@@ -1,0 +1,25 @@
+# .github/workflows/promote.yml
+name: Promote Canary to Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: 'Image tag currently running as canary (the commit SHA)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  promote:
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      image-repository: acrakscanaryprod.azurecr.io/azure-vote-front
+      image-tag: ${{ inputs.image-tag }}
+      deployment-track: stable
+    secrets:
+      inherit
