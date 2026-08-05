@@ -1,0 +1,163 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'helm/**'
+  workflow_dispatch:
+    inputs:
+      deploy_prod_stable:
+        description: 'Deploy stable to production'
+        type: boolean
+        default: false
+      deploy_prod_canary:
+        description: 'Deploy canary to production'
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.set-tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set image tag
+        id: set-tag
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR Login (dev)
+        run: az acr login --name acrakscanarydev
+
+      - name: ACR Login (prod)
+        run: az acr login --name acrakscanaryprod
+
+      - name: Build image
+        run: docker build -t azure-vote-front:${{ github.sha }} app/
+
+      - name: Tag and push to dev ACR
+        run: |
+          docker tag azure-vote-front:${{ github.sha }} acrakscanarydev.azurecr.io/azure-vote-front:${{ github.sha }}
+          docker push acrakscanarydev.azurecr.io/azure-vote-front:${{ github.sha }}
+
+      - name: Tag and push to prod ACR
+        run: |
+          docker tag azure-vote-front:${{ github.sha }} acrakscanaryprod.azurecr.io/azure-vote-front:${{ github.sha }}
+          docker push acrakscanaryprod.azurecr.io/azure-vote-front:${{ github.sha }}
+
+  setup-ingress-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install kubectl and kubelogin
+        run: az aks install-cli --client-version v1.36.2 --kubelogin-version v0.2.19
+
+      - name: Get dev AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group rg-main-akscanary-dev \
+            --name aks-akscanary-dev \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Install ingress-nginx on dev
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --create-namespace \
+            --set controller.replicaCount=1 \
+            --set-string controller.nodeSelector."nodepool-type"=user \
+            --wait \
+            --timeout 5m
+
+  setup-ingress-prod:
+    needs: [build, setup-ingress-dev]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.deploy_prod_stable || inputs.deploy_prod_canary }}
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install kubectl and kubelogin
+        run: az aks install-cli --client-version v1.36.2 --kubelogin-version v0.2.19
+
+      - name: Get prod AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group rg-main-akscanary-prod \
+            --name aks-akscanary-prod \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Install ingress-nginx on prod
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --create-namespace \
+            --set controller.replicaCount=1 \
+            --set-string controller.nodeSelector."nodepool-type"=user \
+            --wait \
+            --timeout 5m
+
+  deploy-dev:
+    needs: [build, setup-ingress-dev,setup-ingress-prod]
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: dev
+      image-repository: acrakscanarydev.azurecr.io/azure-vote-front
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      deployment-track: stable
+    secrets: inherit
+
+  deploy-prod-stable:
+    needs: [build, deploy-dev, setup-ingress-prod]
+    if: ${{ inputs.deploy_prod_stable }}
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      image-repository: acrakscanaryprod.azurecr.io/azure-vote-front
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      deployment-track: stable
+    secrets: inherit
+
+  deploy-prod-canary:
+    needs: [build, deploy-dev, setup-ingress-prod,deploy-prod-stable]
+    if: ${{ inputs.deploy_prod_canary }}
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      image-repository: acrakscanaryprod.azurecr.io/azure-vote-front
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      deployment-track: canary
+    secrets: inherit
