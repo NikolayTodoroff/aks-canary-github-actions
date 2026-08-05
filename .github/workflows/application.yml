@@ -25,6 +25,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: dev
     outputs:
       image-tag: ${{ steps.set-tag.outputs.tag }}
     steps:
@@ -64,6 +65,7 @@ jobs:
   setup-ingress-dev:
     needs: build
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - name: Azure Login (OIDC)
         uses: azure/login@v3
@@ -98,6 +100,7 @@ jobs:
   setup-ingress-prod:
     needs: [build, setup-ingress-dev]
     runs-on: ubuntu-latest
+    environment: prod
     if: ${{ inputs.deploy_prod_stable || inputs.deploy_prod_canary }}
     steps:
       - name: Azure Login (OIDC)
